@@ -64,7 +64,8 @@ public:
         Quantity GetInitialQuantity () const { return initialQuantity_; }
         Quantity GetRemainingQuantity() const{ return remainingQuantity_;}
         Quantity GetFilledQuantity() const { return GetInitialQuantity() - GetRemainingQuantity();}
-        void fill(Quantity quantity){
+        bool isFilled() const { return  GetRemainingQuantity() == 0;}
+        void Fill(Quantity quantity){
                 if(quantity > GetRemainingQuantity()){
                         throw std:: logic_error(std:: format("Order ({ }) cannot be filled for more than its remaining quantity" , GetOrderId()));
                 }
@@ -145,6 +146,60 @@ private:
         Trades MatchOrders(){
                 Trades trades;
                 trades.reserve(orders_.size());
+                while (true ){
+                        if(bids_.empty() || asks_.empty()) break;
+                        auto & [bidPrice , bids] = *bids_.begin();
+                        auto & [askPrice , asks ] = *asks_.begin();
+                        if(bidPrice < askPrice) break;
+                        while( bids.size() && asks.size()){
+                                auto& bid = bids.front();
+                                auto & ask = asks.front();
+                                Quantity quantity =  std::min(bid-> GetRemainingQuantity() , ask->GetRemainingQuantity());
+                                bid->Fill(quantity);
+                                ask->Fill(quantity);
+                                if(bid->isFilled()){
+                                        bids.pop_front();
+                                        orders_.erase(bid->GetOrderId());
+                                }
+                                if(ask->isFilled()){
+                                        asks.pop_front();
+                                        orders_.erase(ask->GetOrderId());
+                                }
+                                if(bids.empty())bids_.erase(bidPrice);
+                                if(asks.empty())asks_.erase(askPrice);
+                                trades.push_back(Trade {
+                                         TradeInfo{ bid->GetOrderId() , bid->GetPrice() , quantity},
+                                         TradeInfo {ask->GetOrderId() , ask->GetPrice() , quantity }});
+
+                        }
+                }
+                if(!bids_.empty()){
+                        auto &[_, bids] = *bids_.begin();
+                        auto & order = bids.front();
+                        if(order->GetOrderType() == OrderType::FillAndKill)CancelOrder(order->GetOrderId());
+                }
+                if(!asks_.empty()){
+                        auto & [_ , asks ]= * asks_.begin();
+                        auto & order = asks.front();
+                        if(order->GetOrderType() == OrderType::FillAndKill)CancelOrder(order->GetOrderId());
+                }
+                return trades;
+        }
+public:
+        Trades AddOrder(OrderPointer order){
+                if (orders_.find(order->GetOrderId()) != orders_.end())return { };
+                if(order->GetOrderType() == OrderType::FillAndKill && !CanMatch(order->GetSide() , order->GetPrice())) return { };
+                OrderPointers::iterator iterator;
+                if(order->GetSide() == Side::Buy){
+                        auto & orders = bids_[order->GetPrice()];
+                        orders.push_back(order);
+                        iterator = std::next(orders.begin() , orders.size() - 1 );
+                }else{
+                        auto & orders = asks_[order->GetPrice()];
+                        orders.push_back(order);
+                        iterator = std::next(orders.begin(), orders.size()- 1);
+                }
+                orders_.insert({ order->GetOrderId() , })
         }
 
 };
